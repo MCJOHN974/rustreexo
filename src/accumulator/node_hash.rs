@@ -53,8 +53,10 @@ use bitcoin_hashes::sha256;
 use bitcoin_hashes::sha512_256;
 use bitcoin_hashes::Hash;
 use bitcoin_hashes::HashEngine;
+use serde::Deserialize;
 #[cfg(feature = "with-serde")]
 use serde::Deserialize;
+use serde::Serialize;
 #[cfg(feature = "with-serde")]
 use serde::Serialize;
 
@@ -70,7 +72,7 @@ use serde::Serialize;
 ///     "0000000000000000000000000000000000000000000000000000000000000000"
 /// );
 /// ```
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub enum NodeHash {
     #[default]
     Empty,

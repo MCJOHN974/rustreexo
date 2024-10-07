@@ -34,6 +34,7 @@ use std::io::Read;
 use std::io::Write;
 use std::rc::Rc;
 use std::rc::Weak;
+use serde::{Deserialize, Serialize};
 
 use super::node_hash::NodeHash;
 use super::proof::Proof;
@@ -46,7 +47,8 @@ use super::util::max_position_at_row;
 use super::util::right_child;
 use super::util::root_position;
 use super::util::tree_rows;
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum NodeType {
     Branch,
     Leaf,
@@ -66,6 +68,66 @@ pub struct Node {
     /// The left and right children of this node, if any.
     right: RefCell<Option<Rc<Node>>>,
 }
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OwnedNode {
+    ty: NodeType,
+    data: NodeHash,
+    // We'll represent `parent` as an `Option<usize>` to hold an index or ID if necessary
+    parent: Option<usize>,
+    // Use `Option<Box<OwnedNode>>` for owned left and right children
+    left: Option<Box<OwnedNode>>,
+    right: Option<Box<OwnedNode>>,
+}
+
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct OwnedPollard {
+    roots: Vec<OwnedNode>,
+    pub leaves: u64,
+    // Optionally include the map if necessary
+    map: HashMap<NodeHash, OwnedNode>,
+}
+
+impl Node {
+    fn from_owned_node(owned_node: OwnedNode, parent: Option<Weak<Node>>) -> Rc<Node> {
+        let node = Rc::new(Node {
+            ty: owned_node.ty,
+            data: Cell::new(owned_node.data),
+            parent: RefCell::new(parent),
+            left: RefCell::new(None),
+            right: RefCell::new(None),
+        });
+
+        // Set up left and right children recursively
+        if let Some(left_owned) = owned_node.left {
+            let left_node = Node::from_owned_node(*left_owned, Some(Rc::downgrade(&node)));
+            *node.left.borrow_mut() = Some(left_node);
+        }
+        if let Some(right_owned) = owned_node.right {
+            let right_node = Node::from_owned_node(*right_owned, Some(Rc::downgrade(&node)));
+            *node.right.borrow_mut() = Some(right_node);
+        }
+
+        node
+    }
+}
+
+impl Pollard {
+    pub fn from_owned_pollard(owned: OwnedPollard) -> Self {
+        let roots = owned.roots.into_iter().map(|owned_root| {
+            Node::from_owned_node(owned_root, None)
+        }).collect();
+
+        Pollard {
+            roots,
+            leaves: owned.leaves,
+            map: HashMap::new(), // Reconstruct the map if necessary
+        }
+    }
+}
+
+
+
 impl Node {
     /// Recomputes the hash of all nodes, up to the root.
     fn recompute_hashes(&self) {
@@ -609,6 +671,18 @@ impl Pollard {
         })
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 impl Debug for Pollard {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
