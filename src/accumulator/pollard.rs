@@ -69,63 +69,75 @@ pub struct Node {
     right: RefCell<Option<Rc<Node>>>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct OwnedNode {
-    ty: NodeType,
-    data: NodeHash,
-    // We'll represent `parent` as an `Option<usize>` to hold an index or ID if necessary
-    parent: Option<usize>,
-    // Use `Option<Box<OwnedNode>>` for owned left and right children
-    left: Option<Box<OwnedNode>>,
-    right: Option<Box<OwnedNode>>,
-}
 
-#[derive(Default, Clone, Serialize, Deserialize)]
-pub struct OwnedPollard {
-    roots: Vec<OwnedNode>,
-    pub leaves: u64,
-    // Optionally include the map if necessary
-    map: HashMap<NodeHash, OwnedNode>,
-}
 
-impl Node {
-    fn from_owned_node(owned_node: OwnedNode, parent: Option<Weak<Node>>) -> Rc<Node> {
-        let node = Rc::new(Node {
-            ty: owned_node.ty,
-            data: Cell::new(owned_node.data),
-            parent: RefCell::new(parent),
-            left: RefCell::new(None),
-            right: RefCell::new(None),
-        });
 
-        // Set up left and right children recursively
-        if let Some(left_owned) = owned_node.left {
-            let left_node = Node::from_owned_node(*left_owned, Some(Rc::downgrade(&node)));
-            *node.left.borrow_mut() = Some(left_node);
-        }
-        if let Some(right_owned) = owned_node.right {
-            let right_node = Node::from_owned_node(*right_owned, Some(Rc::downgrade(&node)));
-            *node.right.borrow_mut() = Some(right_node);
-        }
 
-        node
+use serde::de::Deserializer;
+use serde::de::{self, Visitor};
+use std::io::Cursor;
+use serde::ser::Serializer;
+
+
+impl Serialize for Pollard {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Create a buffer to hold the serialized bytes
+        let mut buffer = Vec::new();
+        
+        // Use your existing serialize method to write into the buffer
+        self.serialize(&mut buffer).map_err(|err| serde::ser::Error::custom(err.to_string()))?;
+        
+        // Depending on the format, serialize the bytes appropriately
+
+        // For binary formats (e.g., bincode)
+        serializer.serialize_bytes(&buffer)
+
+        // For text-based formats (e.g., JSON), you might need to encode the bytes
+        // as a Base64 string or hexadecimal string. Uncomment the following lines
+        // if you're using a text-based serializer:
+
+        // use base64::encode;
+        // let encoded = encode(&buffer);
+        // serializer.serialize_str(&encoded)
     }
 }
 
-impl Pollard {
-    pub fn from_owned_pollard(owned: OwnedPollard) -> Self {
-        let roots = owned.roots.into_iter().map(|owned_root| {
-            Node::from_owned_node(owned_root, None)
-        }).collect();
+impl<'de> Deserialize<'de> for Pollard {
+    fn deserialize<D>(deserializer: D) -> Result<Pollard, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PollardVisitor;
 
-        Pollard {
-            roots,
-            leaves: owned.leaves,
-            map: HashMap::new(), // Reconstruct the map if necessary
+        impl<'de> Visitor<'de> for PollardVisitor {
+            type Value = Pollard;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a byte array representing Pollard")
+            }
+
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Pollard, E>
+            where
+                E: de::Error,
+            {
+                let mut reader = Cursor::new(v);
+                Pollard::deserialize(&mut reader).map_err(|err| de::Error::custom(err.to_string()))
+            }
+
+            fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Pollard, E>
+            where
+                E: de::Error,
+            {
+                let mut reader = Cursor::new(v);
+                Pollard::deserialize(&mut reader).map_err(|err| de::Error::custom(err.to_string()))
+            }
         }
+        deserializer.deserialize_bytes(PollardVisitor)
     }
 }
-
 
 
 impl Node {
@@ -711,6 +723,8 @@ mod test {
     use crate::accumulator::pollard::Node;
     use crate::accumulator::proof::Proof;
 
+    use serde::de::DeserializeOwned;
+
     fn hash_from_u8(value: u8) -> NodeHash {
         let mut engine = Data::engine();
 
@@ -1079,4 +1093,45 @@ mod test {
         assert!(deserialized.get_roots()[0].get_data().is_empty());
         assert_eq!(deserialized.leaves, 16);
     }
+
+
+    #[test]
+    fn test_is_pollard_deserialize_owned() {
+        is_pollard_deserialize_owned();
+    }
+
+    #[test]
+    fn test_bincode_serialization() {
+        let hashes = get_hash_vec_of(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        let mut pollard  = Pollard::new();
+        pollard.modify(&hashes, &[]).expect("Test pollards are valid");
+        // Serialize with bincode
+        let binary_data = bincode::serialize(&pollard).expect("Serialization failed");
+
+        // Deserialize with bincode
+        let deserialized_pollard: Pollard =
+            bincode::deserialize(&binary_data).expect("Deserialization failed");
+
+        // Assert equality
+        let old_roots = pollard.get_roots();
+        let new_roots = deserialized_pollard.get_roots();
+
+        assert_eq!(old_roots.len(), new_roots.len());
+        for (old_root, new_root) in old_roots.iter().zip(new_roots.iter()) {
+            assert_eq!(old_root.get_data(), new_root.get_data());
+        }
+    }
+
+    fn is_pollard_deserialize_owned() {
+        let acc = Pollard::new();
+        let _ = deserialize_owned_need_foo(acc);
+    }
+    
+    fn deserialize_owned_need_foo<T>(acc: T) -> Result<T, u32>
+    where
+        T: DeserializeOwned,
+    {
+        Ok(acc)
+    }
+    
 }
