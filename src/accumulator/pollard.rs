@@ -67,6 +67,8 @@ pub struct Node {
     left: RefCell<Option<Rc<Node>>>,
     /// The left and right children of this node, if any.
     right: RefCell<Option<Rc<Node>>>,
+    /// Helper flag for zkutreexo project. Shows if node was used in utreexo mutations.
+    pub used: Cell<bool>,
 }
 
 
@@ -156,6 +158,27 @@ impl Node {
             }
         }
     }
+    /// Strips all unused nodes from the tree.
+    pub fn strip_unused(&mut self) {
+        if let Some(left) = self.left.take() {
+            if !left.used.get() {
+                self.left = RefCell::new(None);
+            } else {
+                let mut new_left = left.as_ref().clone();
+                new_left.strip_unused();
+                self.left = RefCell::new(Some(Rc::new(new_left)));
+            }
+        }
+        if let Some(right) = self.right.take() {
+            if !right.used.get() {
+                self.right = RefCell::new(None);
+            } else {
+                let mut new_right = right.as_ref().clone();
+                new_right.strip_unused();
+                self.right = RefCell::new(Some(Rc::new(new_right)));
+            }
+        }
+    }
     /// Writes one node to the writer, this method will recursively write all children.
     /// The primary use of this method is to serialize the accumulator. In this case,
     /// you should call this method on each root in the forest.
@@ -207,6 +230,7 @@ impl Node {
                     parent: RefCell::new(ancestor.map(|a| Rc::downgrade(&a))),
                     left: RefCell::new(None),
                     right: RefCell::new(None),
+                    used: Cell::new(false),
                 });
                 index.insert(leaf.data.get(), Rc::downgrade(&leaf));
                 return Ok(leaf);
@@ -217,6 +241,7 @@ impl Node {
                 parent: RefCell::new(ancestor.map(|a| Rc::downgrade(&a))),
                 left: RefCell::new(None),
                 right: RefCell::new(None),
+                used: Cell::new(false),
             });
             if !data.is_empty() {
                 let left = _read_one(Some(node.clone()), reader, index)?;
@@ -278,6 +303,42 @@ impl Pollard {
             leaves: 0,
         }
     }
+
+    /// resets used flag for all nodes to false
+    pub fn restore_used_flag(&mut self) {
+        for (_hash, wnode) in &self.map {
+            if let Some(rc_node) = wnode.upgrade() {
+                rc_node.used.set(false);
+            }
+        }
+    }
+
+    /// Returns version of pollard where all unused nodes are removed
+    pub fn get_stripped_pollard(&self) -> Pollard {
+        let mut new_roots: Vec<Rc<Node>> = Default::default();
+        for root in self.roots.iter() {
+            let mut new_root = root.as_ref().clone();
+            new_root.strip_unused();
+            new_roots.push(Rc::new(new_root));
+        }
+        let new_leaves: u64 = 0; // TODO: Am I sure we don't need it??
+
+        let mut new_map: HashMap<NodeHash, Weak<Node>> = Default::default();
+
+        for (_hash, wnode) in &self.map {
+            if let Some(rc_node) = wnode.upgrade() {
+                if rc_node.used.get() {
+                    new_map.insert(rc_node.data.get(), Rc::downgrade(&rc_node));
+                }
+            }
+        }
+        Pollard {
+            map: new_map,
+            roots: new_roots,
+            leaves: new_leaves,
+        }
+    }
+
     /// Writes the Pollard to a writer. Used to send the accumulator over the wire
     /// or to disk.
     /// # Example
@@ -458,7 +519,8 @@ impl Pollard {
         for target in targets {
             match self.map.remove(&target) {
                 Some(target) => {
-                    self.del_single(&target.upgrade().unwrap());
+                    let mut tgt = target.upgrade().unwrap().clone().as_ref().clone();
+                    self.del_single(&mut tgt);
                 }
                 None => {
                     return Err(format!("node {} not in the forest", target));
@@ -532,8 +594,9 @@ impl Pollard {
         }
         pos
     }
-    fn del_single(&mut self, node: &Node) -> Option<()> {
+    fn del_single(&mut self, node: &mut Node) -> Option<()> {
         let parent = node.parent.borrow();
+        
         // Deleting a root
         let parent = match *parent {
             Some(ref node) => node.upgrade()?,
@@ -545,10 +608,13 @@ impl Pollard {
                     data: Cell::new(NodeHash::default()),
                     left: RefCell::new(None),
                     right: RefCell::new(None),
+                    used: Cell::new(true),
                 });
                 return None;
             }
         };
+
+        parent.used.set(true);
 
         let me = parent.left.borrow();
         // Can unwrap because we know the sibling exists
@@ -558,13 +624,27 @@ impl Pollard {
             parent.left.borrow().clone()
         };
         if let Some(ref sibling) = sibling {
+            sibling.used.set(true);
+
             let grandparent = parent.parent.borrow().clone();
+            
+            match grandparent {
+                Some(ref gp) => {
+                    gp.upgrade().unwrap().used.set(true);
+                }
+                None => {}
+            }
+
+
+
             sibling.parent.replace(grandparent.clone());
 
             if let Some(ref grandparent) = grandparent.and_then(|g| g.upgrade()) {
                 if grandparent.left.borrow().clone().as_ref().unwrap().data == parent.data {
+                    grandparent.left.borrow().clone().unwrap().used.set(true);
                     grandparent.left.replace(Some(sibling.clone()));
                 } else {
+                    grandparent.right.borrow().clone().unwrap().used.set(true);
                     grandparent.right.replace(Some(sibling.clone()));
                 }
                 sibling.recompute_hashes();
@@ -587,11 +667,13 @@ impl Pollard {
             data: Cell::new(value),
             left: RefCell::new(None),
             right: RefCell::new(None),
+            used: Cell::new(true),
         });
         self.map.insert(value, Rc::downgrade(&node));
         let mut leaves = self.leaves;
         while leaves & 1 != 0 {
             let root = self.roots.pop().unwrap();
+            root.used.set(true);
             if root.get_data() == NodeHash::empty() {
                 leaves >>= 1;
                 continue;
@@ -602,9 +684,12 @@ impl Pollard {
                 data: Cell::new(NodeHash::parent_hash(&root.data.get(), &node.data.get())),
                 left: RefCell::new(Some(root.clone())),
                 right: RefCell::new(Some(node.clone())),
+                used: Cell::new(true),
             });
             root.parent.replace(Some(Rc::downgrade(&new_node)));
+            root.parent.borrow().as_ref().unwrap().upgrade().unwrap().used.set(true);
             node.parent.replace(Some(Rc::downgrade(&new_node)));
+            node.parent.borrow().as_ref().unwrap().upgrade().unwrap().used.set(true);
 
             node = new_node;
             leaves >>= 1;
