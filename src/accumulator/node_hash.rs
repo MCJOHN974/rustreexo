@@ -53,14 +53,12 @@ use bitcoin_hashes::sha256;
 use bitcoin_hashes::sha512_256;
 use bitcoin_hashes::Hash;
 use bitcoin_hashes::HashEngine;
-use serde::Deserialize;
 #[cfg(feature = "with-serde")]
 use serde::Deserialize;
-use serde::Serialize;
 #[cfg(feature = "with-serde")]
 use serde::Serialize;
 
-#[derive(Eq, PartialEq, Copy, Clone, Hash, PartialOrd, Ord)]
+#[derive(Eq, PartialEq, Copy, Clone, Hash, PartialOrd, Ord, Default)]
 #[cfg_attr(feature = "with-serde", derive(Serialize, Deserialize))]
 /// NodeHash is a wrapper around a 32 byte array that represents a hash of a node in the tree.
 /// # Example
@@ -72,7 +70,6 @@ use serde::Serialize;
 ///     "0000000000000000000000000000000000000000000000000000000000000000"
 /// );
 /// ```
-#[derive(Default, Serialize, Deserialize)]
 pub enum NodeHash {
     #[default]
     Empty,
