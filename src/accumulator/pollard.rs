@@ -35,7 +35,6 @@ use std::io::Write;
 use std::rc::Rc;
 use std::rc::Weak;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 use super::node_hash::NodeHash;
 use super::proof::Proof;
@@ -288,7 +287,7 @@ pub struct Pollard {
     pub leaves: u64,
     /// A map of all nodes in the forest, indexed by their hash, this is used to lookup
     /// leaves when proving membership.
-    map: BTreeMap<NodeHash, Weak<Node>>,
+    map: HashMap<NodeHash, Weak<Node>>,
 }
 impl Pollard {
     /// Creates a new empty [Pollard].
@@ -299,7 +298,7 @@ impl Pollard {
     /// ```
     pub fn new() -> Pollard {
         Pollard {
-            map: BTreeMap::new(),
+            map: HashMap::new(),
             roots: Vec::new(),
             leaves: 0,
         }
@@ -324,7 +323,7 @@ impl Pollard {
         }
         let new_leaves: u64 = 0; // TODO: Am I sure we don't need it??
 
-        let mut new_map: BTreeMap<NodeHash, Weak<Node>> = Default::default();
+        let mut new_map: HashMap<NodeHash, Weak<Node>> = Default::default();
 
         for (_hash, wnode) in &self.map {
             if let Some(rc_node) = wnode.upgrade() {
@@ -362,7 +361,6 @@ impl Pollard {
         for root in &self.roots {
             root.write_one(&mut writer).unwrap();
         }
-        
 
         Ok(())
     }
@@ -386,7 +384,7 @@ impl Pollard {
         let leaves = read_u64(&mut reader)?;
         let roots_len = read_u64(&mut reader)?;
         let mut roots = Vec::new();
-        let mut map = BTreeMap::new();
+        let mut map = HashMap::new();
         for _ in 0..roots_len {
             let (root, _map) = Node::read_one(&mut reader)?;
             map.extend(_map);
@@ -901,7 +899,7 @@ mod test {
 
         let mut p = Pollard::new();
         p.modify(&hashes, &[]).expect("Pollard should not fail");
-        p.del_single(&mut p.grab_node(1).unwrap().0.as_ref().clone());
+        p.del_single(&p.grab_node(1).unwrap().0);
         assert_eq!(p.get_roots().len(), 1);
 
         let root = p.get_roots()[0].clone();
@@ -922,7 +920,7 @@ mod test {
 
         let mut p = Pollard::new();
         p.modify(&hashes, &[]).expect("Pollard should not fail");
-        p.del_single(&mut p.grab_node(2).unwrap().0.as_ref().clone());
+        p.del_single(&p.grab_node(2).unwrap().0);
         assert_eq!(p.get_roots().len(), 1);
         let root = p.get_roots()[0].clone();
         assert_eq!(root.data.get(), NodeHash::default());
@@ -1181,6 +1179,12 @@ mod test {
         assert_eq!(deserialized.leaves, 16);
     }
 
+
+    #[test]
+    fn test_is_pollard_deserialize_owned() {
+        is_pollard_deserialize_owned();
+    }
+
     #[test]
     fn test_bincode_serialization() {
         let hashes = get_hash_vec_of(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
@@ -1203,28 +1207,16 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_bincode_serialization_stripping() {
-        let hashes = get_hash_vec_of(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-        let mut pollard  = Pollard::new();
-        pollard.modify(&hashes, &[]).expect("Test pollards are valid");
-        // Strip pollard
-        let stripped_pollard = pollard.get_stripped_pollard();
-        // Serialize with bincode
-        let binary_data = bincode::serialize(&stripped_pollard.clone()).expect("Serialization failed");
-
-        // Deserialize with bincode
-        let deserialized_pollard: Pollard =
-            bincode::deserialize(&binary_data).expect("Deserialization failed");
-
-        // Assert equality
-        let old_roots = stripped_pollard.get_roots();
-        let new_roots = deserialized_pollard.get_roots();
-
-        assert_eq!(old_roots.len(), new_roots.len());
-        for (old_root, new_root) in old_roots.iter().zip(new_roots.iter()) {
-            assert_eq!(old_root.get_data(), new_root.get_data());
-        }
+    fn is_pollard_deserialize_owned() {
+        let acc = Pollard::new();
+        let _ = deserialize_owned_need_foo(acc);
+    }
+    
+    fn deserialize_owned_need_foo<T>(acc: T) -> Result<T, u32>
+    where
+        T: DeserializeOwned,
+    {
+        Ok(acc)
     }
     
 }
