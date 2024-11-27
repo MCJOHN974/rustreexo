@@ -399,7 +399,7 @@ impl Pollard {
         let mut map = HashMap::new();
         for _ in 0..roots_len {
             let (root, _map) = Node::read_one(&mut reader)?;
-            // map.extend(_map);
+            map.extend(_map);
             roots.push(root);
         }
         Ok(Pollard { roots, leaves, map })
