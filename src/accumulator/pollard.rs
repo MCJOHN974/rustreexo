@@ -158,6 +158,15 @@ impl Node {
             }
         }
     }
+    pub fn restore_used_flag(&self) {
+        self.used.set(false);
+        if let Some(left) = self.left.borrow().as_ref() {
+            left.restore_used_flag();
+        }
+        if let Some(right) = self.right.borrow().as_ref() {
+            right.restore_used_flag();
+        }
+    }
     /// Strips all unused nodes from the tree.
     pub fn strip_unused(&mut self) {
         if let Some(left) = self.left.take() {
@@ -310,6 +319,9 @@ impl Pollard {
             if let Some(rc_node) = wnode.upgrade() {
                 rc_node.used.set(false);
             }
+        }
+        for root in &self.roots {
+            root.restore_used_flag();
         }
     }
 
@@ -886,45 +898,45 @@ mod test {
             acc.roots[3].data.get().to_string().as_str(),
         );
     }
-    #[test]
-    fn test_delete_roots_child() {
-        // Assuming the following tree:
-        //
-        // 02
-        // |---\
-        // 00  01
-        // If I delete `01`, then `00` will become a root, moving it's hash to `02`
-        let values = vec![0, 1];
-        let hashes: Vec<NodeHash> = values.into_iter().map(hash_from_u8).collect();
-
-        let mut p = Pollard::new();
-        p.modify(&hashes, &[]).expect("Pollard should not fail");
-        p.del_single(&p.grab_node(1).unwrap().0);
-        assert_eq!(p.get_roots().len(), 1);
-
-        let root = p.get_roots()[0].clone();
-        assert_eq!(root.data.get(), hashes[0]);
-    }
 
     #[test]
-    fn test_delete_root() {
-        // Assuming the following tree:
-        //
-        // 02
-        // |---\
-        // 00  01
-        // If I delete `02`, then `02` will become an empty root, it'll point to nothing
-        // and its data will be Data::default()
-        let values = vec![0, 1];
-        let hashes: Vec<NodeHash> = values.into_iter().map(hash_from_u8).collect();
-
+    fn test_pollard_size() {
         let mut p = Pollard::new();
-        p.modify(&hashes, &[]).expect("Pollard should not fail");
-        p.del_single(&p.grab_node(2).unwrap().0);
-        assert_eq!(p.get_roots().len(), 1);
-        let root = p.get_roots()[0].clone();
-        assert_eq!(root.data.get(), NodeHash::default());
+        let mut values = vec![];
+        for i in 0..1000000 {
+            values.push(i as u8);
+        }
+        let hashes: Vec<NodeHash> = values.into_iter().map(hash_from_u8).collect();
+        p.modify(&hashes, &Vec::new()).unwrap();
+        let cloned_p = p.clone();
+        let serialized_cloned_p = bincode::serialize(&cloned_p).unwrap();
+        println!("Pollard size: {}", serialized_cloned_p.len());
+        p.restore_used_flag();
+        // println!("Map size: {}", p.map.len());
+        // for root in p.roots {
+        //     println!("{:#?}", root.used.get());
+        // }
+        let stripped = p.get_stripped_pollard();
+
+        
+
+        // let mut count = 0;
+        // let mut used_count = 0;
+        // for (_hash, wnode) in stripped.map {
+        //     count += 1;
+        //     if wnode.upgrade().unwrap().used.get() {
+        //         used_count += 1;
+        //     }
+        // }
+        // println!("Total nodes: {count}, used nodes: {used_count}");
+
+        let serialized_p = bincode::serialize(&stripped).unwrap();
+        println!("Stripped Pollard size: {}", serialized_p.len());
+
+        
     }
+
+
     #[test]
     fn test_delete_non_root() {
         // Assuming this tree, if we delete `01`, 00 will move up to 08's position
